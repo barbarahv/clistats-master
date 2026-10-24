@@ -1,0 +1,159 @@
+# Documentação — Paralelização do clistats
+
+Trabalho de Programação Paralela (P1). Aplicação sequencial transformada em duas versões paralelas (processos com memória compartilhada e threads), com análise experimental e execução em container.
+
+Integrantes: *[preencher nomes do grupo]*
+
+---
+
+## 1. Aplicação
+
+**clistats** é uma ferramenta de linha de comando em C++ (código aberto, autor dpmcmlxxvi) que lê números separados por vírgula e calcula, para cada coluna (dimensão), contagem, mínimo, média, máximo e desvio padrão. Os cálculos são rolantes: cada valor lido atualiza os acumuladores, sem guardar o conjunto inteiro na memória. Valores não numéricos são ignorados.
+
+- **Origem do código:** projeto open source clistats, adaptado pelo grupo para as versões paralelas.
+- **Linguagem:** C++17 (g++), POSIX (`fork`, `waitpid`, `mmap`) e `std::thread`.
+
+## 2. Estrutura do projeto
+
+```
+projeto/
+  sequencial/   so_sequencial.cpp, README.md
+  processos/    so_processos_2.cpp, so_processos_4.cpp, so_processos_8.cpp, README.md
+  threads/      so_threads_2.cpp, so_threads_4.cpp, so_threads_8.cpp, README.md
+  container/    Dockerfile
+  testes/
+    entradas/     entrada.csv, entrada_pequena.csv
+    resultados/   saida_sequencial.txt, tempos_fora.csv, tempos_container.csv
+    rodar_testes.sh
+  documentacao/ apresentacao.pdf, documentacao.md
+```
+
+## 3. Entrada e saída
+
+**Entrada:** `entradas/entrada.csv`, 87 MB, 2.530.468 linhas. Colunas: `ID, idade, anos, salario, Despesas`. O arquivo tem cabeçalho de texto, quebras de linha CRLF e linhas com 4 e com 5 campos (2.339.201 linhas com 5, 191.130 com 4, 137 com 1 campo).
+
+**Saída:** tabela com uma linha por dimensão, por exemplo:
+
+```
+#   Dimension     Count    Minimum   Mean         Maximum       Stdev
+            1   2530330   1.000000   871.281987   2278.000000   460.335198
+```
+
+A versão sequencial leva mais de 2 s nessa entrada (cerca de 4 s no ambiente de teste de 1 núcleo), cumprindo o mínimo exigido.
+
+## 4. Versão sequencial
+
+Lê o arquivo linha por linha, separa os valores e atualiza o acumulador de cada coluna (`MultivariateTracker`). No fim imprime as estatísticas. Um único fluxo de execução.
+
+## 5. Estratégia de paralelização
+
+A carga é dividida por **dados**: o arquivo é cortado em fatias de bytes de tamanho parecido, uma por trabalhador. Cada corte avança até o próximo `\n`, para não partir uma linha ao meio. Cada trabalhador calcula as estatísticas parciais da sua fatia (parte paralela) e, no final, os parciais são combinados (contagens somadas, mínimo/máximo globais, média e variância ponderadas), que é a parte sequencial e pequena.
+
+A divisão de trabalho é a mesma nas duas versões paralelas. O que muda é o mecanismo de execução e de compartilhamento de dados.
+
+## 6. Versão com processos (`fork` + memória compartilhada)
+
+1. O pai mapeia o arquivo com `mmap` (somente leitura).
+2. O pai cria uma região de memória compartilhada com `mmap(MAP_SHARED | MAP_ANONYMOUS)`, com um slot por filho (`SharedMemoryBuffer`), antes dos `fork()`.
+3. Com 4 processos: os filhos 1, 2 e 3 processam as fatias 0, 1 e 2; o **pai processa a fatia 3** enquanto os filhos trabalham.
+4. Cada filho grava o parcial (min, média, máx, variância e contagem por coluna) no seu slot e termina.
+5. O pai espera com `waitpid()` e consolida os resultados.
+
+**Sincronização:** cada filho escreve só no seu slot, então não há escrita concorrente na mesma posição e não é necessário mutex. O pai só lê depois do `waitpid()`. São usadas barreiras de memória (`std::atomic_thread_fence`, release/acquire) para garantir a visibilidade das escritas.
+
+## 7. Versão com threads
+
+1. A thread principal cria N `std::thread`, cada uma com uma fatia do arquivo.
+2. Cada thread acumula estatísticas locais.
+3. Ao terminar, entra na **seção crítica** (marcada nos arquivos como `SEÇÃO CRÍTICA`) e mescla o parcial no objeto `MemoriaCompartilhada`, protegido por `std::mutex` (`lock_guard`).
+4. A principal espera todas com `join()` e imprime o resultado.
+
+A seção crítica é curta: o trabalho pesado (parsing) é feito em variáveis locais, e o mutex só protege a mesclagem, o que reduz a contenção.
+
+## 8. Comparação entre processos e threads
+
+| Critério | Processos | Threads |
+|---|---|---|
+| Criação | `fork()` (mais cara) | `std::thread` (mais barata) |
+| Memória | `mmap` compartilhada explícita | heap compartilhada por padrão |
+| Sincronização | slots próprios + `waitpid` + barreiras | `std::mutex` + `join` |
+| Risco | dados só trafegam via memória compartilhada | condição de corrida sem mutex |
+
+## 9. Metodologia experimental
+
+- Entrada: `entrada.csv`. Versões: sequencial e processos/threads com 2, 4 e 8 trabalhadores.
+- Tempo: média de 5 execuções por configuração (`testes/rodar_testes.sh`), **fora do container**.
+- **Speedup = T_sequencial / T_paralelo.**
+- Container: `docker run --cpus=1`, `--cpus=2` e `--cpus=4`, repetindo 2, 4 e 8 processos/threads.
+- Gráficos: (1) tempo de execução, (2) speedup, (3) tempo fora × dentro do container.
+- Máquina de teste: *[preencher CPU, núcleos, RAM, SO]*.
+
+## 10. Container
+
+O `container/Dockerfile` usa Ubuntu 24.04, instala o g++, copia o código e compila todos os `.cpp` com `g++ -O2 -std=c++17 -pthread`. Não é preciso instalar nada na máquina do usuário.
+
+```bash
+docker build -f container/Dockerfile -t clistats-par .
+docker run --rm --cpus="2" -v "$PWD/testes:/data" clistats-par \
+    so_threads_4 -i /data/entradas/entrada.csv
+```
+
+Use as mesmas flags de compilação fora e dentro do container, para a comparação do Gráfico 3 ser justa.
+
+## 11. Como reproduzir
+
+```bash
+# 1. dependências
+sudo apt install -y g++
+
+# 2. compilar tudo em bin/
+mkdir -p bin
+for f in sequencial/*.cpp processos/*.cpp threads/*.cpp; do
+  g++ -O2 -std=c++17 -pthread "$f" -o "bin/$(basename "$f" .cpp)"
+done
+
+# 3. executar
+./bin/so_sequencial -i testes/entradas/entrada.csv
+./bin/so_processos_4 -i testes/entradas/entrada.csv
+./bin/so_threads_4 -i testes/entradas/entrada.csv
+
+# 4. validar equivalência
+./bin/so_threads_4 -i testes/entradas/entrada.csv | diff - testes/resultados/saida_sequencial.txt && echo OK
+
+# 5. medir tempos e speedup (a partir de testes/)
+cd testes && BIN_DIR=../bin ./rodar_testes.sh fora
+IMAGEM=clistats-par ./rodar_testes.sh docker
+```
+
+## 12. Resultados
+
+*[Preencher com os dados de `resultados/tempos_fora.csv` e `resultados/tempos_container.csv`: tabela de tempos, speedup, e os três gráficos.]*
+
+Interpretação esperada (confirmar com os dados medidos):
+- O speedup tende a crescer até o número de núcleos disponíveis e depois estabilizar ou cair, por causa da parte sequencial (consolidação), da leitura do arquivo e da criação de processos/threads.
+- Com `--cpus=1`, mais trabalhadores não reduzem o tempo, porque o limite de CPU impede o ganho; com `--cpus=4`, espera-se ganho até 4 trabalhadores.
+
+## 13. Validação de equivalência
+
+Cada versão paralela deve gerar saída idêntica à do sequencial (`diff` contra `resultados/saida_sequencial.txt`).
+
+| Versão | Situação na entrada atual |
+|---|---|
+| Threads (2, 4 e 8) | idêntica ao sequencial |
+| Processos 4 e 8, modo menu (colunas 1-4) | contagem correta (2.530.330) |
+| Processos 2, modo menu | divergente (2.459.165) |
+| Processos 2, 4 e 8, modo `-i` (todas as colunas) | divergente (perdem linhas) |
+
+Hipótese ainda não confirmada: as linhas com 4 e 5 campos misturadas no arquivo quebram a consolidação dos parciais nas versões com processos. **Atualizar esta tabela após a correção.**
+
+## 14. Limitações conhecidas e trabalhos futuros
+
+- As versões com processos precisam ser corrigidas para produzir resultados equivalentes em todas as colunas.
+- O número de processos/threads está fixo no código (um arquivo por quantidade). O enunciado exige que seja informado na execução; unificar em um único binário por versão com parâmetro (`-p N` / `-t N`).
+- O parser da versão sequencial (`istringstream`) é mais lento que o dos processos (`strtod`/`fast_atof`). Para o speedup ser justo, todas as versões devem usar o mesmo parser.
+- A entrada tem cabeçalho de 5 colunas, mas parte das linhas tem só 4 campos, então as colunas `salario` e `Despesas` ficam misturadas. Isso não afeta a paralelização, mas convém explicar na defesa.
+
+## 15. Referências
+
+- clistats, dpmcmlxxvi: projeto open source usado como base.
+- Enunciado do trabalho de Programação Paralela (P1), Sistemas Operacionais.

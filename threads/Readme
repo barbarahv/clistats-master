@@ -1,0 +1,42 @@
+# Versão paralela com threads — clistats
+
+Paraleliza o clistats usando **múltiplas threads** (`std::thread`) que
+compartilham o mesmo espaço de memória, com **`std::mutex`** protegendo a
+região crítica.
+
+O número de threads é escolhido **na execução** com `-p N`. O mesmo binário
+roda com 2, 4, 8 ou qualquer outro N (até 64) — não há código duplicado por
+quantidade de threads.
+
+## Estratégia
+
+1. O arquivo de entrada é dividido em **N fatias** de bytes de tamanho
+   parecido. Cada corte é ajustado para começar em início de linha (nunca
+   parte uma linha ao meio).
+2. Cada thread processa a sua fatia. O parsing (dividir a linha, converter
+   os números) é feito em **variáveis locais da thread**, sem lock — ou seja,
+   roda em paralelo de verdade.
+3. Ao terminar de parsear cada linha, a thread entra numa **seção crítica**
+   protegida por `std::mutex` (`std::lock_guard`) e atualiza o objeto de
+   **memória compartilhada** (`MemoriaCompartilhada`), que contém as
+   estatísticas acumuladas de todas as linhas.
+4. A thread principal espera todas com `join()` e imprime o resultado final.
+
+A regra de divisão garante que **nenhuma linha é processada duas vezes**:
+cada fatia processa só as linhas que **começam** dentro dela. Se uma linha
+atravessa a fronteira, ela pertence à fatia onde começou; a fatia seguinte
+descarta o resto dela.
+
+## Requisitos
+
+- **Compilador C++17** (g++ 7+) com suporte a pthreads.
+- **Biblioteca pthread** (linkada com `-pthread`).
+- Funciona em Linux, macOS e qualquer sistema POSIX com C++17.
+
+## 1. Instalar dependências
+
+Em Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y g++

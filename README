@@ -1,0 +1,398 @@
+# clistats — versões sequencial, processos e threads
+
+Ferramenta de estatísticas de linha de comando escrita em C++17. Lê um arquivo
+(ou `stdin`) com números delimitados, calcula estatísticas por coluna
+(contagem, mínimo, média, máximo, desvio padrão) usando o algoritmo de Welford
+e imprime uma tabela formatada.
+
+O projeto traz **três versões do mesmo programa**, todas com o mesmo parser,
+mesmo cálculo e mesma saída — o que muda é a estratégia de paralelização:
+
+| Versão | Binário | Estratégia | N escolhido com |
+|---|---|---|---|
+| Sequencial | `so_sequencial` | 1 processo, 1 thread | — |
+| Processos | `so_processos` | `fork()` + memória compartilhada (`mmap`) | `-p N` |
+| Threads | `so_threads` | `std::thread` + `std::mutex` | `-p N` |
+
+Como as três versões compartilham o mesmo parser e o mesmo cálculo, os
+resultados devem ser **idênticos** entre elas. Isso permite comparar o tempo
+de execução de forma honesta (a única variável é a estratégia de
+paralelização).
+
+## Estrutura do projeto
+├── so_sequencial.cpp # versão sequencial (referência)
+├── so_processos.cpp # versão com N processos (fork + mmap)
+├── so_threads.cpp # versão com N threads (std::thread + mutex)
+├── README.md # este arquivo
+├── testes/
+│ └── entradas/
+│ └── entrada.csv # arquivo de exemplo para os testes
+└── container/
+└── Dockerfile # imagem com tudo compilado
+
+
+## Requisitos
+
+- **Compilador C++17** (g++ 7+).
+- **Biblioteca pthread** (linkada com `-pthread`).
+- Para a versão de processos: **sistema POSIX** (Linux, macOS, BSD) — usa
+  `fork`, `waitpid` e `mmap`.
+
+## Flags comuns às três versões
+
+Todas as versões aceitam as mesmas flags, exceto `-p` (que só existe em
+processos e threads). Se você rodar sem nenhuma flag, o programa abre um
+**menu interativo** (Enter aceita o valor entre `[ ]`).
+
+| Flag | Significado |
+|---|---|
+| `-i <arquivo>` | Arquivo de entrada (padrão: `stdin`). |
+| `-s <N>` | Número de linhas a pular (ex.: cabeçalho). Padrão: 0. |
+| `-k <N>` | Processar só as N primeiras linhas de dados (após `-s`). |
+| `-d <char>` | Delimitador (1 caractere). Padrão: `,`. |
+| `-fc <lista>` | Colunas a processar (ex.: `1,2,3` ou `1:4`). |
+| `-fd` | Mostrar os dados filtrados (linha a linha) antes da tabela. |
+| `-ss` | Mostrar as estatísticas finais (padrão quando não há `-fd`). |
+| `-v <N>` | Verbosidade (0 a 5). Padrão: 0. |
+| `-p <N>` | **Só em processos e threads:** número de processos/threads. |
+| `--no-fork` | **Só em processos:** força execução sequencial (equivale a `-p 1`). |
+| `--no-threads` | **Só em threads:** força execução sequencial (equivale a `-p 1`). |
+| `-h`, `--help` | Mostra a ajuda. |
+| `-V`, `--version` | Mostra a versão. |
+
+Cada execução imprime ao final, em `stderr`, uma linha de resumo:
+
+[RESUMO] Modo: SEQUENCIAL | processos: 1 (PID 12345) | tempo de processamento: 3.8421 s
+[RESUMO] Modo: PARALELO | processos: 4 (pai PID 12345 + 3 filhos, PIDs: ...) | tempo de processamento: 1.6234 s
+[RESUMO] Modo: THREADS | threads: 4 (PID 12345) | tempo de processamento: 0.9876 s
+
+
+Isso permite comparar o tempo de cada versão sem precisar mexer no `stdout`
+(a tabela vai para `stdout`, o resumo para `stderr`).
+
+---
+
+## 1. Instalar dependências
+
+### Debian / Ubuntu
+
+```bash
+sudo apt update
+sudo apt install -y g++
+
+Fedora / RHEL
+
+sudo dnf install -y gcc-c++
+
+Verificar
+
+g++ --version
+
+Deve mostrar g++ (Ubuntu ...) 11.x ou superior. Se mostrar versão < 7, o
+-std=c++17 não vai funcionar; instale uma versão mais recente (ou use
+clang++).
+
+A biblioteca pthread já vem com o g++ na maioria das distribuições; o
+-pthread na compilação só precisa que ela exista.
+
+2. Compilar o programa
+Compile as três versões de uma vez (recomendado), ou cada uma
+individualmente.
+
+Compilar tudo de uma vez
+A partir da raiz do projeto:
+
+mkdir -p bin
+g++ -O2 -std=c++17 -pthread so_sequencial.cpp -o bin/so_sequencial
+g++ -O2 -std=c++17 -pthread so_processos.cpp  -o bin/so_processos
+g++ -O2 -std=c++17 -pthread so_threads.cpp    -o bin/so_threads
+
+Ou com um loop (útil se você mover os .cpp para subpastas):
+
+mkdir -p bin
+for f in *.cpp; do
+  g++ -O2 -std=c++17 -pthread "$f" -o "bin/$(basename "$f" .cpp)"
+done
+
+Compilar só a versão sequencial
+
+g++ -O2 -std=c++17 -pthread so_sequencial.cpp -o bin/so_sequencial
+
+Compilar só a versão com processos
+
+g++ -O2 -std=c++17 -pthread so_processos.cpp -o bin/so_processos
+
+Requer sistema POSIX. O -pthread é necessário por causa do
+std::atomic_thread_fence usado na sincronização entre processos.
+
+Compilar só a versão com threads
+
+g++ -O2 -std=c++17 -pthread so_threads.cpp -o bin/so_threads
+
+O -pthread é obrigatório: sem ele, o linker não encontra pthread_create
+e o programa compila mas falha em execução.
+
+Sobre as flags de compilação
+-O2 — otimizações (essencial para medir tempo realista).
+
+-std=c++17 — habilita std::thread, std::mutex, std::atomic, etc.
+
+-pthread — linka a pthread e define macros do sistema.
+
+Se quiser ver warnings (recomendado antes de entregar):
+
+g++ -O2 -std=c++17 -pthread -Wall -Wextra so_sequencial.cpp -o bin/so_sequencial
+
+3. Executar a versão sequencial
+A versão sequencial (so_sequencial) é a referência: 1 processo, 1
+thread, sem paralelismo. Todas as outras versões devem produzir a mesma
+saída para o mesmo arquivo.
+
+Uso básico
+bash
+./bin/so_sequencial -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -ss
+-i testes/entradas/entrada.csv — arquivo de entrada.
+
+-s 1 — pula a primeira linha (cabeçalho).
+
+-fc 1,2,3,4 — processa as colunas 1, 2, 3 e 4.
+
+-ss — mostra as estatísticas (padrão).
+
+Sem cabeçalho
+bash
+./bin/so_sequencial -i entrada.csv -fc 1,2,3,4 -ss
+Lendo de stdin
+bash
+cat entrada.csv | ./bin/so_sequencial -s 1 -fc 1,2,3,4 -ss
+Ou:
+
+bash
+./bin/so_sequencial -s 1 -fc 1,2,3,4 -ss < entrada.csv
+Modo interativo (sem argumentos)
+bash
+./bin/so_sequencial
+O menu pergunta arquivo, linhas a pular, colunas e delimitador. Enter aceita
+o valor entre [ ].
+
+Medir o tempo
+bash
+time ./bin/so_sequencial -i entrada.csv -s 1 -fc 1,2,3,4 -ss > seq.txt
+O tempo também aparece no [RESUMO] no stderr:
+
+bash
+./bin/so_sequencial -i entrada.csv -s 1 -fc 1,2,3,4 -ss > seq.txt 2> resumo_seq.txt
+cat resumo_seq.txt
+Guarde seq.txt — ele vai ser usado para verificar a equivalência das outras
+versões.
+
+4. Executar a versão com processos
+A versão so_processos usa fork() + memória compartilhada (mmap com
+MAP_SHARED | MAP_ANONYMOUS) para dividir o trabalho entre N processos:
+o pai + N−1 filhos. O número N é escolhido na execução com -p N — o
+mesmo binário roda com 2, 4, 8 ou qualquer outro N (até 256).
+
+Uso básico
+bash
+./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss
+Isso processa entrada.csv com 4 processos (pai + 3 filhos) e imprime a
+tabela no stdout. O resumo no stderr mostra quantos processos rodaram e
+os PIDs:
+
+text
+[RESUMO] Modo: PARALELO | processos: 4 (pai PID 12345 + 3 filhos, PIDs: 12346 12347 12348) | tempo de processamento: 1.6234 s
+Escolhendo o número de processos
+bash
+./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 2 -ss   # 2 processos
+./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss   # 4 processos
+./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 8 -ss   # 8 processos
+./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 16 -ss  # 16 processos
+-p 1 executa em modo sequencial (mesmo comportamento do so_sequencial).
+--no-fork é equivalente a -p 1 e serve para forçar o modo sequencial
+quando se quer comparar.
+
+A entrada deve ser arquivo
+A versão com processos exige um arquivo em -i. Não dá para dividir
+stdin em fatias porque o fluxo não tem posição fixa no disco. Se você rodar
+sem -i, o programa cai automaticamente em modo sequencial (com aviso no
+stderr).
+
+Medir o tempo
+bash
+time ./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss > proc4.txt
+Ou capture o resumo separadamente:
+
+bash
+./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss > proc4.txt 2> resumo_proc4.txt
+cat resumo_proc4.txt
+Comparar 2, 4 e 8 processos
+bash
+for n in 1 2 4 8; do
+  echo "=== -p $n ==="
+  ./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > proc$n.txt 2> resumo_proc$n.txt
+  cat resumo_proc$n.txt
+done
+Você deve ver o tempo cair conforme N sobe (até o limite de núcleos da
+máquina), mantendo o resultado idêntico.
+
+Verificar equivalência com a versão sequencial
+bash
+diff seq.txt proc4.txt && echo "OK: processos p4 == sequencial"
+Se o diff sair vazio, os resultados são idênticos. Se sair diferença, há
+divergência entre as versões (bug).
+
+5. Executar a versão com threads
+A versão so_threads usa std::thread + std::mutex para dividir o
+trabalho entre N threads dentro do mesmo processo. O número N é escolhido
+na execução com -p N — o mesmo binário roda com 2, 4, 8 ou qualquer
+outro N (até 64).
+
+Uso básico
+bash
+./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss
+Isso processa entrada.csv com 4 threads e imprime a tabela no stdout.
+O resumo no stderr mostra quantas threads rodaram:
+
+text
+[RESUMO] Modo: THREADS | threads: 4 (PID 12345) | tempo de processamento: 0.9876 s
+Escolhendo o número de threads
+bash
+./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 2 -ss   # 2 threads
+./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss   # 4 threads
+./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 8 -ss   # 8 threads
+./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 16 -ss  # 16 threads
+-p 1 executa em modo sequencial (mesmo comportamento do so_sequencial).
+--no-threads é equivalente a -p 1.
+
+Medir o tempo
+bash
+time ./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss > thr4.txt
+Ou capture o resumo separadamente:
+
+bash
+./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss > thr4.txt 2> resumo_thr4.txt
+cat resumo_thr4.txt
+Comparar 2, 4 e 8 threads
+bash
+for n in 1 2 4 8; do
+  echo "=== -p $n ==="
+  ./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > thr$n.txt 2> resumo_thr$n.txt
+  cat resumo_thr$n.txt
+done
+Verificar equivalência com a versão sequencial
+bash
+diff seq.txt thr4.txt && echo "OK: threads p4 == sequencial"
+Verificação cruzada: todas as versões devem dar o mesmo resultado
+Com o mesmo arquivo de entrada e as mesmas flags, as três versões (e os
+diferentes N de cada uma) devem produzir saída idêntica. Um roteiro
+completo:
+
+bash
+# Referência
+./bin/so_sequencial -i entrada.csv -s 1 -fc 1,2,3,4 -ss > seq.txt
+
+# Processos com vários N
+for n in 1 2 4 8; do
+  ./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > proc$n.txt 2> resumo_proc$n.txt
+  diff -q seq.txt proc$n.txt || echo "DIFERENCA em processos -p $n"
+done
+
+# Threads com vários N
+for n in 1 2 4 8; do
+  ./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > thr$n.txt 2> resumo_thr$n.txt
+  diff -q seq.txt thr$n.txt || echo "DIFERENCA em threads -p $n"
+done
+
+echo "Se nada foi impresso acima, todos os resultados sao identicos."
+Se todos os diff -q passarem sem saída, você tem a prova de que as três
+versões são gêmeas comportamentais.
+
+Comparação de tempo
+Para comparar o tempo entre as versões, use o mesmo arquivo e as mesmas
+flags, e olhe o [RESUMO] no stderr:
+
+bash
+echo "=== Sequencial ==="
+./bin/so_sequencial -i entrada.csv -s 1 -fc 1,2,3,4 -ss > /dev/null
+
+echo "=== Processos ==="
+for n in 2 4 8; do
+  ./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > /dev/null
+done
+
+echo "=== Threads ==="
+for n in 2 4 8; do
+  ./bin/so_threads -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > /dev/null
+done
+O que esperar:
+
+O tempo da versão sequencial é a linha de base.
+
+Processos e threads com -p 2, -p 4, -p 8 devem ficar mais rápidos até
+o limite de núcleos da máquina (nproc). Acima desse limite, o tempo para
+de cair.
+
+Se o arquivo for muito pequeno, o overhead de fork/criação de thread e do
+mutex pode dominar, e o tempo fica parecido entre N=1 e N=8. Nesse caso,
+gere um arquivo maior para ver o ganho.
+
+Para forçar o cache quente (evitar que a primeira leitura do arquivo pese na
+medição):
+
+bash
+cat entrada.csv > /dev/null
+cat entrada.csv > /dev/null
+E rode cada medição 3 vezes, pegando o melhor tempo:
+
+bash
+for n in 1 2 4 8; do
+  echo "=== -p $n ==="
+  for r in 1 2 3; do
+    ./bin/so_processos -i entrada.csv -s 1 -fc 1,2,3,4 -p $n -ss > /dev/null
+  done
+done
+
+Execução em container (opcional)
+Para rodar em ambiente isolado (ex.: com limite de CPUs para ver o efeito do
+escalonador), use Docker:
+
+bash
+docker build -t clistats-par container/
+docker run --rm -it --cpus="2" -v "$PWD/testes:/data" clistats-par \
+    /app/bin/so_processos -i /data/entradas/entrada.csv -p 4
+Veja container/Dockerfile na raiz do projeto para a imagem.
+
+Resumo das 5 etapas
+A partir da raiz do projeto:
+
+Instalar dependências:
+
+bash
+sudo apt update && sudo apt install -y g++
+Compilar tudo:
+
+bash
+mkdir -p bin
+g++ -O2 -std=c++17 -pthread so_sequencial.cpp -o bin/so_sequencial
+g++ -O2 -std=c++17 -pthread so_processos.cpp  -o bin/so_processos
+g++ -O2 -std=c++17 -pthread so_threads.cpp    -o bin/so_threads
+Sequencial:
+
+bash
+./bin/so_sequencial -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -ss
+Processos (mesmo binário, N escolhido com -p):
+
+bash
+./bin/so_processos -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -p 2 -ss
+./bin/so_processos -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss
+./bin/so_processos -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -p 8 -ss
+Threads (mesmo formato de flags, N escolhido com -p):
+
+bash
+./bin/so_threads -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -p 2 -ss
+./bin/so_threads -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -p 4 -ss
+./bin/so_threads -i testes/entradas/entrada.csv -s 1 -fc 1,2,3,4 -p 8 -ss
+Se algum resultado divergir do sequencial, rode de novo com -ss e compare
+com diff. O [RESUMO] no stderr confirma qual modo foi usado em cada
+execução.
+

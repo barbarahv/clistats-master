@@ -1,0 +1,93 @@
+=====================================================================
+                 GUIA DE EXECUÇÃO - PROJETO CLISTATS
+=====================================================================
+
+1. COMO COMPILAR E RODAR A NOVA VERSÃO SEQUENCIAL NO VS CODE
+---------------------------------------------------------------------
+Passo 1: Abra a pasta do projeto no VS Code e abra o arquivo:
+  src/so_sequencial.cpp
+
+Passo 2: Compilar e Executar:
+  - Clique no botão de Play (▶️) no canto superior direito.
+  - Selecione "Run C/C++ File" (Executar Arquivo C/C++).
+  - O terminal será aberto automaticamente com o programa rodando.
+
+Como usar o Menu Interativo que criamos:
+  O programa fará perguntas sequenciais no terminal. Basta preencher:
+  - Caminho do arquivo: ../dados_exemplo.csv
+  - Quantas linhas pular: 1 (ou apenas dê Enter)
+  - Quais colunas processar: 2,3 (ou apenas dê Enter)
+
+
+2. COMO COMPILAR E RODAR NO TERMINAL (Linux, WSL ou MinGW) SEQUENCIAL
+---------------------------------------------------------------------
+Passo 1: Entrar na pasta sequencial:
+  cd /mnt/c/Users/Barbara/Desktop/clistats-master/clistats-master/sequencial
+
+Passo 2: Compilar o arquivo sequencial modificado:
+  g++ -O3 so_sequencial.cpp -o so_sequencial
+
+Passo 3: Executar o programa:
+  ./so_sequencial
+
+Quando o menu aparecer, digite:
+  ../dados_exemplo.csv
+  ../testes/entrada/entrada.csv
+  (Enter para pular 1 linha de cabeçalho)
+  (Enter para processar colunas 2,3)
+
+
+3. COMO COMPILAR E RODAR A VERSÃO DE  PROCESSOS (so_processos.cpp)
+---------------------------------------------------------------------
+Passo 1: Entrar na pasta processos (se ainda não estiver nela):
+  cd /mnt/c/Users/Barbara/Desktop/clistats-master/clistats-master/processos
+
+Passo 2: Compilar o arquivo de  processos:
+  g++ -O2 -std=c++17 -o so_processos so_processos.cpp
+
+Passo 3a: Executar no MODO INTERATIVO (menu), com 2 processos:
+ ./so_processos
+
+  Quando o menu aparecer, digite:
+    ../dados_exemplo.csv
+    ../testes/entrada/entrada.csv
+    (Enter para pular 1 linha de cabeçalho)
+    (Enter para processar colunas 2,3)
+ 
+
+
+4. COMO COMPILAR E RODAR A VERSÃO DE  THREADS (so_threads.cpp)
+---------------------------------------------------------------------
+Passo 1: Entrar na pasta threads (se ainda não estiver nela):
+cd /mnt/c/Users/Barbara/Desktop/clistats-master/clistats-master/threads
+
+Passo 2: Compilar o arquivo de 2 threads:
+g++ -O2 -std=c++11 so_threads.cpp -o so_threads -pthread
+
+Passo 3a: Executar no MODO INTERATIVO (menu), com 2 threads:
+./so_threads
+
+Quando o menu aparecer, digite:
+
+../dados_exemplo.csv
+../testes/entrada/entrada.csv
+(Enter para pular 1 linha de cabeçalho)
+(Enter para processar colunas 2,3)
+
+
+9. COMO RODAR A VERSÃO ORIGINAL (clistats)
+---------------------------------------------------------------------
+Passo 1: Compilar o código original:
+  g++ -O3 clistats.cpp -o clistats_original
+
+Passo 2: Executar com o arquivo de teste padrão (direto pelo terminal):
+  ./clistats_original -i ../dados_exemplo.csv -s 1 -fc 2,3 -ss
+
+
+7. RESULTADOS ESPERADOS (dados_exemplo.csv - Colunas 2 e 3)
+---------------------------------------------------------------------
+Dimension   Count      Minimum         Mean      Maximum        Stdev
+        1     100    23.820000    49.189100    86.150000    11.022507
+        2     100    39.760000    79.003300   136.600000    16.439121
+
+

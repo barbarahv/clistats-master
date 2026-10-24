@@ -1,0 +1,126 @@
+# Versão paralela com processos — clistats
+
+Paraleliza o clistats usando **múltiplos processos** (`fork()`) e **memória compartilhada** (`mmap` com `MAP_SHARED | MAP_ANONYMOUS`).
+
+## Estratégia
+
+1. O arquivo de entrada é mapeado em memória (`mmap`) e dividido em fatias de bytes de tamanho parecido, ajustadas para começar em início de linha.
+2. Uma região de memória compartilhada é criada antes dos `fork()`.
+3. Cada processo calcula as estatísticas parciais da sua fatia. O processo pai também processa uma fatia.
+4. Os filhos gravam seus resultados parciais em posições próprias da memória compartilhada.
+5. O pai espera os filhos (`waitpid`) e consolida os resultados parciais no resultado final.
+
+Arquivos (um por quantidade de processos):
+
+| Arquivo | Processos |
+|---|---|
+| `so_processos_2.cpp` | 2 (pai + 1 filho) |
+| `so_processos_4.cpp` | 4 (pai + 3 filhos) |
+| `so_processos_8.cpp` | 8 (pai + 7 filhos) |
+
+## 1. Instalar dependências
+
+Sistema Linux/POSIX (usa `fork`, `waitpid` e `mmap`) e compilador C++17:
+
+```bash
+sudo apt update
+sudo apt install -y g++
+```
+
+## 2. Compilar
+
+```bash
+g++ -O2 -std=c++17 -pthread so_processos_2.cpp -o so_processos_2
+g++ -O2 -std=c++17 -pthread so_processos_4.cpp -o so_processos_4
+g++ -O2 -std=c++17 -pthread so_processos_8.cpp -o so_processos_8
+```
+
+## 3. Executar
+
+A entrada deve ser um **arquivo** (a divisão em fatias exige acesso ao arquivo via `-i`):
+
+```bash
+./so_processos_2 -i entrada.csv
+./so_processos_4 -i entrada.csv
+./so_processos_8 -i entrada.csv
+```
+
+Para medir o tempo:
+
+```bash
+time ./so_processos_4 -i entrada.csv
+```
+
+## Verificar equivalência com a versão sequencial
+
+```bash
+./so_sequencial -i entrada.csv > seq.txt
+./so_processos_4 -i entrada.csv > proc4.txt
+diff seq.txt proc4.txt && echo "Resultados iguais"
+```
+
+## Execução em container
+
+```bash
+docker run --rm -it --cpus="2" -v "$PWD/testes:/data" clistats-par \
+    so_processos_4 -i /data/entradas/entrada.csv
+```
+
+Veja `container/Dockerfile` na raiz do projeto.
+
+
+## Resumo das 5 etapas (todas as versões)
+
+A partir da **raiz do projeto**:
+
+1. **Instalar dependências:** `sudo apt update && sudo apt install -y g++`
+2. **Compilar tudo:**
+   ```bash
+   mkdir -p bin
+   for f in sequencial/*.cpp processos/*.cpp threads/*.cpp; do
+     g++ -O2 -std=c++17 -pthread "$f" -o "bin/$(basename "$f" .cpp)"
+   done
+   ```
+3. **Sequencial:** `./bin/so_sequencial -i testes/entradas/entrada.csv`
+4. **Processos:** `./bin/so_processos_2 -i ...`, `./bin/so_processos_4 -i ...`, `./bin/so_processos_8 -i ...` (mesmo arquivo de entrada)
+5. **Threads:** `./bin/so_threads_2 -i ...`, `./bin/so_threads_4 -i ...`, `./bin/so_threads_8 -i ...` (mesmo arquivo de entrada)
+
+O README principal está na raiz do projeto (`README.md`).# Versão paralela com processos — clistats
+
+Paraleliza o clistats usando **múltiplos processos** (`fork()`) e **memória
+compartilhada** (`mmap` com `MAP_SHARED | MAP_ANONYMOUS`).
+
+O número de processos é escolhido **na execução** com `-p N`. O mesmo binário
+roda com 2, 4, 8 ou qualquer outro N (até 256) — não há código duplicado por
+quantidade de processos.
+
+## Estratégia
+
+1. O arquivo de entrada é lido e dividido em **N fatias** de bytes de tamanho
+   parecido. Cada corte é ajustado para começar em início de linha (nunca
+   parte uma linha ao meio).
+2. Uma região de memória compartilhada é criada **antes** dos `fork()`.
+3. O pai cria **N−1 filhos**. Cada filho processa uma fatia e grava as
+   estatísticas parciais (mínimo, média, máximo, variância, contagem) na sua
+   posição própria da memória compartilhada.
+4. O **próprio pai** também trabalha: processa a última fatia enquanto os
+   filhos rodam. Não há processo ocioso.
+5. O pai espera todos os filhos (`waitpid`) e **consolida** os resultados
+   parciais no resultado final (merge de Welford exato, sem aproximação).
+
+Assim, `-p N` produz **N processos reais** processando em paralelo: o pai +
+N−1 filhos.
+
+## Requisitos
+
+- **Sistema Linux/POSIX** (usa `fork`, `waitpid`, `mmap`).
+- **Compilador C++17** (g++ 7+).
+- **pthread** (necessário para o link da `std::atomic` e headers do sistema).
+
+## 1. Instalar dependências
+
+Em Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y g++

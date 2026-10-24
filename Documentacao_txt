@@ -1,0 +1,316 @@
+# clistats — Documentação do código
+
+Ferramenta de linha de comando em C++ (C++11 ou superior) que lê dados numéricos delimitados (CSV por padrão) e calcula, **coluna por coluna**, estatísticas resumidas: contagem, mínimo, média, máximo e desvio padrão.
+
+Versão documentada: **1.1.0**. Arquivo único: `clistats.cpp`.
+
+Compilação sugerida:
+
+```bash
+g++ -O2 -std=c++17 -o clistats clistats.cpp
+```
+
+---
+
+## 1. Visão geral
+
+O programa funciona em três etapas:
+
+1. **Configuração**: lê as opções, seja pela linha de comando (`CommandLineParser`) ou por um menu interativo em português (`interactiveMenu`) quando nenhum argumento é passado.
+2. **Processamento (`StatisticsApp::run`)**: lê o arquivo (ou `stdin`) linha por linha, divide cada linha em células, converte para número, aplica o filtro de colunas e atualiza as estatísticas de forma incremental.
+3. **Exibição (`StatisticsApp::display`)**: imprime uma tabela formatada com o resumo de cada coluna.
+
+As estatísticas são calculadas **em fluxo** (streaming). O programa nunca guarda o arquivo inteiro na memória, só o estado atual de cada coluna. Por isso funciona com arquivos grandes, mas média e desvio padrão são calculados de forma incremental (algoritmo de Welford).
+
+---
+
+## 2. Como usar
+
+### 2.1 Modo linha de comando
+
+```bash
+clistats [-h] [-v <nível>] [-V] [-i <arquivo>] [-s <linhas>] [-fc <filtro>] [-fd] [-ss]
+```
+
+| Flag | Forma longa | O que faz |
+|---|---|---|
+| `-h` | `--help` | Mostra a ajuda e sai. |
+| `-V` | `--version` | Mostra a versão (`1.1.0`) e sai. |
+| `-v <n>` | `--verbose <n>` | Nível de log de 0 a 5 (padrão 0). |
+| `-i <arquivo>` | `--input <arquivo>` | Arquivo de entrada. O arquivo precisa existir. Sem esta flag, lê de `stdin`. |
+| `-s <n>` | `--skip <n>` | Número de linhas a pular no início (ex.: cabeçalho). Padrão 0. |
+| `-fc <filtro>` | `--filterColumn <filtro>` | Colunas a processar, começando em 1. Aceita listas e intervalos: `1,2,5` ou `1:3,5`. |
+| `-fd` | `--filtered` | Imprime os dados filtrados (apenas valores válidos das colunas escolhidas). |
+| `-ss` | `--statistics` | Imprime a tabela de estatísticas. |
+
+Regras de comportamento:
+
+- Se **nem `-fd` nem `-ss`** forem passados, as estatísticas são mostradas por padrão.
+- Se **só `-fd`** for passado, as estatísticas **não** são mostradas. Para ver as duas coisas, use `-fd -ss`.
+- O delimitador é sempre a vírgula `,` (não há flag para mudar).
+- Não há flag para limitar o número de linhas processadas. O campo `numLinesToKeep` existe mas fica sempre no máximo.
+
+Exemplos:
+
+```bash
+clistats -i dados.csv -s 1                # pula cabeçalho, mostra estatísticas
+clistats -i dados.csv -s 1 -fc 1:3,5      # só colunas 1, 2, 3 e 5
+clistats -s 1 < dados.csv                 # lendo por redirecionamento
+cat dados.csv | clistats -s 1 -fd -ss     # dados filtrados + estatísticas
+clistats -v 5 -i dados.csv                # log máximo (muito verboso)
+```
+
+### 2.2 Modo interativo
+
+Se o programa for executado **sem nenhum argumento**, abre um menu em português com três perguntas. Apertar Enter usa o valor padrão entre colchetes:
+
+1. **Caminho do arquivo de entrada.** Vazio significa ler do teclado (termine com EOF: Ctrl-D no Linux/Mac, Ctrl-Z e Enter no Windows).
+2. **Linhas de cabeçalho a pular.** Padrão `1`. Se digitar algo inválido, o programa pergunta de novo.
+3. **Colunas a processar.** Padrão `1,2,3,4`. Aceita intervalos como `1:3,5`.
+
+No modo interativo o delimitador é sempre `,` e as estatísticas são sempre mostradas. Não há como ativar `-fd` nem mudar o nível de log.
+
+### 2.3 Códigos de saída
+
+| Código | Significado |
+|---|---|
+| 0 | Sucesso (inclui `--help` e `--version`) |
+| 1 | Falha ao analisar os argumentos |
+| 2 | Falha ao calcular as estatísticas |
+| 3 | Falha ao exibir as estatísticas |
+
+### 2.4 Formato da saída
+
+```
+#================================================================
+#                      Statistics
+#================================================================
+#   Dimension   Count    Minimum       Mean    Maximum      Stdev
+#----------------------------------------------------------------
+            1       3   1.000000   4.000000   7.000000   2.449490
+            2       2   2.000000   3.500000   5.000000   1.500000
+```
+
+- As linhas de cabeçalho começam com `#` para poder enviar a saída direto ao **gnuplot**.
+- `Dimension` é o número da coluna filtrada (1, 2, 3...), **não** o número da coluna original. Com `-fc 2,5`, as duas colunas aparecem como `1` e `2`.
+- `Count` conta apenas valores numéricos válidos daquela coluna.
+- `Stdev` é a **raiz da variância populacional** (dividida por N, não N−1).
+- Os números usam formato fixo com 6 casas decimais.
+
+---
+
+## 3. Regras de processamento dos dados
+
+Estas regras decidem como cada linha do arquivo é tratada:
+
+1. **Linhas em branco** são ignoradas e **não** entram na contagem de linhas para `-s`.
+2. As primeiras `-s` linhas **não vazias** são puladas.
+3. A **primeira linha processada define o número de colunas** do arquivo. Linhas seguintes com mais colunas têm o excesso ignorado. Linhas com menos colunas deixam as colunas faltantes como inválidas.
+4. Cada célula é convertida para `double`. Se a conversão falhar (texto, vazio, número seguido de lixo como `12abc`), a célula é marcada como **inativa** e simplesmente não entra nas estatísticas daquela coluna. As outras colunas da mesma linha continuam sendo usadas.
+5. O **filtro de colunas** é aplicado depois da conversão. Sem `-fc`, todas as colunas são usadas. Colunas do filtro que passam do número real de colunas são descartadas.
+6. As quebras de linha aceitas são `\n` (Linux), `\r` (Mac antigo) e `\r\n` (Windows). Última linha sem quebra final também é lida.
+
+---
+
+## 4. Arquitetura: o que cada parte faz
+
+### 4.1 `ApplicationProperties`
+
+Guarda dados fixos do programa.
+
+| Membro | Descrição |
+|---|---|
+| `NAME` | `"clistats"` |
+| `AUTHOR` | E-mail para reportar bugs |
+| `VERSION_MAJOR/MINOR/PATCH` | Partes da versão |
+| `version()` | Junta as três partes no formato `"1.1.0"` |
+
+### 4.2 `Logger`, `LogStream` e `logMessage`
+
+Sistema simples de mensagens de log com seis níveis, do mais grave ao mais detalhado:
+
+`FATAL (0)` → `ERROR` → `WARNING` → `INFO` → `DEBUG` → `DETAIL (5)`
+
+- `Logger::logLevel` é o nível global (padrão `FATAL`). Uma mensagem só aparece se o nível dela for **menor ou igual** ao global.
+- `Logger::log(nível)` escreve o rótulo (`INFO   : `) e devolve o stream certo: `FATAL`, `ERROR` e `WARNING` vão para **stderr**; `INFO`, `DEBUG` e `DETAIL` vão para **stdout**.
+- `LogStream` é um objeto temporário. Se o nível está habilitado, `operator<<` escreve no stream, e o destrutor adiciona a quebra de linha.
+- `logMessage(nível)` é a função de conveniência: `logMessage(Logger::Level::INFO) << "texto";`
+
+Observação: o nível global só passa a valer quando `StatisticsApp` é construída. Erros de parsing dos argumentos são `FATAL` e sempre aparecem.
+
+### 4.3 `StringParser`
+
+Conversões entre texto e número.
+
+| Função | O que faz |
+|---|---|
+| `parseNumber<T>(valor)` | Converte número em texto no formato fixo (`3.140000`). Se for NaN, devolve `"nan"`. |
+| `toValue<T>(texto, destino)` | Converte texto em número. Devolve `true` só se a string **inteira** foi consumida (`"12abc"` falha). |
+
+### 4.4 `StringSplitter`
+
+Divide uma string em tokens por um delimitador.
+
+| Função | O que faz |
+|---|---|
+| Construtor `(src, delim)` | Cria e já divide. |
+| `initialize(src, delim)` | Divide `src` e substitui os tokens antigos. Mantém tokens vazios (`"a,,b"` gera 3 tokens). |
+| `at(i)` | Devolve o token `i` (lança `std::out_of_range` se inválido). |
+| `size()` | Número de tokens. |
+| `tokens()` | Cópia do vetor de tokens. |
+| `toValue<T>(i, destino)` | Converte o token `i` em número. |
+| `toIntegers(texto, destino, delim=":")` (estática) | Converte `"5"` em `[5]` e `"3:7"` em `[3,4,5,6,7]`. Se vier `"7:3"`, inverte para `3:7`. Falha com 0 ou mais de 2 partes, ou partes não numéricas. |
+
+### 4.5 `DataPoint` e `DataVector`
+
+- **`DataPoint`**: um valor `double` mais uma flag `active`. Só pontos ativos entram nas estatísticas. O padrão é inativo com valor 0.
+- **`DataVector`**: um `std::vector<DataPoint>` com duas extras:
+  - `deactivate()` marca todos os pontos como inativos.
+  - `copy(src, numSrc, dst, numDst, mask, numMask)` (estática) copia de `src` para `dst` só os elementos cuja posição é `true` na máscara. Antes de copiar, desativa o destino. Posições além do tamanho da máscara são copiadas. Se o destino for menor que o necessário, ele cresce com `push_back`.
+
+### 4.6 `StatisticsTrackerOptions` e `CommandLineOptions`
+
+Estruturas de configuração.
+
+**`StatisticsTrackerOptions`**: quatro flags (`doMax`, `doMean`, `doMin`, `doVar`) que dizem quais estatísticas calcular. Todas começam `false`; o parser as liga quando `showStatistics` é verdadeiro.
+
+**`CommandLineOptions`**: todas as opções do programa.
+
+| Campo | Padrão | Significado |
+|---|---|---|
+| `delimiter` | `""` (vira `","`) | Delimitador de colunas |
+| `fileInput` | `""` | Arquivo de entrada (vazio = `stdin`) |
+| `filterColumns` | vazio | Máscara de colunas (vazio = todas) |
+| `numLinesToKeep` | máximo de `int` | Limite de linhas processadas |
+| `numLinesToSkip` | 0 | Linhas a pular |
+| `showFilteredData` | `false` | Ativado por `-fd` |
+| `showStatistics` | `false` | Ativado por `-ss` ou por padrão |
+| `statisticsOptions` | tudo `false` | Quais estatísticas calcular |
+| `verboseLevel` | 0 | Nível de log (0–5) |
+
+### 4.7 `CommandLineParser`
+
+Transforma `argv` em um `CommandLineOptions`.
+
+| Função | O que faz |
+|---|---|
+| Construtor `(argc, argv)` | Chama `parse`. Lança `std::runtime_error` se algo for inválido. |
+| `printUsage()` (estática) | Imprime o texto de ajuda completo (em inglês). |
+| `printVersion()` (estática) | Imprime `1.1.0`. |
+| `showUsage()` / `showVersion()` | Dizem se `-h` ou `-V` foram pedidos. |
+| `parse` (privada) | Percorre os argumentos numa lista, um por um. `-h` e `-V` param imediatamente. As demais flags validam o valor seguinte e lançam exceção em caso de erro. No fim, define o delimitador padrão, decide se mostra estatísticas e liga as flags `do*`. |
+
+Validações feitas em `parse`:
+
+- `-v`: inteiro entre 0 e 5.
+- `-i`: o arquivo precisa abrir.
+- `-s`: inteiro maior ou igual a 0.
+- `-fc`: cada item deve ser inteiro positivo ou intervalo válido. Os números são convertidos para índices base 0.
+- Qualquer flag desconhecida gera erro com sugestão de usar `--help`.
+
+### 4.8 `StatisticsTracker`
+
+Estatísticas de **uma** coluna, atualizadas valor a valor.
+
+- **Getters:** `getCount`, `getMinimum`, `getMean`, `getMaximum`, `getVariance`, `getName`. **Setter:** `setName`.
+- **`update(valor)`**:
+  - Incrementa a contagem.
+  - No primeiro valor, inicializa mínimo, máximo e média com ele e a variância com 0.
+  - Nos seguintes, atualiza o mínimo e o máximo por comparação.
+  - Média e variância usam o **algoritmo de Welford**, que não precisa guardar os dados e é numericamente estável:
+
+```
+delta      = valor - média_antiga
+média_nova = média_antiga + delta / n
+variância  = ((n-1) * variância_antiga + delta * (valor - média_nova)) / n
+```
+
+Só as estatísticas ligadas em `StatisticsTrackerOptions` são calculadas.
+
+### 4.8.1 `MultivariateTracker`
+
+Gerencia um `StatisticsTracker` por coluna.
+
+| Função | O que faz |
+|---|---|
+| Construtor `(tamanho, opções)` | Cria `tamanho` rastreadores. O programa cria com tamanho 0. |
+| `update(DataVector)` | Se o rastreador está vazio, cria um por elemento do vetor. Se o tamanho do vetor não bate com o número de rastreadores, devolve `false` sem fazer nada. Atualiza apenas os pontos **ativos**. |
+| `getDimension()` | Número de colunas rastreadas. |
+| `getCount/Minimum/Mean/Maximum/Variance/Name(i)` | Repassam para o rastreador `i`. |
+| `setName(i, nome)` | Define o nome da coluna `i`. |
+
+### 4.9 `StatisticsWriter`
+
+Formata a saída.
+
+| Função | O que faz |
+|---|---|
+| Construtor `(comentário="#")` | Define o prefixo das linhas de cabeçalho. |
+| `writeData(stream, dados, delimitador=" ")` | Escreve uma linha com os valores **ativos**, separados por espaço. Usado com `-fd`. |
+| `writeStatistics(stream, tracker)` | Calcula a largura de cada coluna pelo conteúdo, imprime o cabeçalho decorado com `=` e `-`, e uma linha por coluna com contagem, mínimo, média, máximo e desvio padrão (`sqrt` da variância). |
+
+### 4.10 `StatisticsApp`
+
+Coordena tudo.
+
+| Função | O que faz |
+|---|---|
+| Construtor | Guarda as opções, define o nível de log global e aponta a saída para `std::cout`. |
+| `run()` | Loop principal (descrito na seção 5). Devolve 0. |
+| `display()` | Se `showStatistics` estiver ativo, chama `writeStatistics`. Devolve `true`. |
+| `readline(stream)` (estática, privada) | Lê uma linha tratando `\n`, `\r`, `\r\n` e fim de arquivo. Ao chegar ao EOF com linha vazia, marca o `eofbit` para o loop parar. |
+
+Constantes internas: `LF = '\n'`, `CR = '\r'`, `EF = EOF`.
+
+### 4.11 Funções auxiliares do menu interativo
+
+| Função | O que faz |
+|---|---|
+| `readTextOrDefault(padrão)` | Lê uma linha; se vier vazia, devolve o padrão. |
+| `readWholeNumberOrDefault(padrão)` | Lê um inteiro não negativo. Repete a pergunta se o texto for inválido ou negativo. |
+| `interactiveMenu(opções)` | Faz as três perguntas, monta a máscara de colunas, liga as estatísticas, define delimitador `,` e mostra um resumo da configuração. |
+
+### 4.12 `AppStatus`, `pdrv` e `main`
+
+- `AppStatus::Status`: `SUCCESS`, `FAILED_PARSING`, `FAILED_RUN`, `FAILED_DISPLAY` (valores 0 a 3).
+- `pdrv(argc, argv)`: o "driver" do programa.
+  1. Sem argumentos: chama `interactiveMenu`. Com argumentos: usa `CommandLineParser` (trata `-h` e `-V` aqui).
+  2. Cria `StatisticsApp` e chama `run()`.
+  3. Chama `display()`.
+  4. Erros em cada etapa são capturados e viram o código de saída correspondente.
+- `main` só chama `pdrv`. Ele fica dentro de `#ifndef _CLISTATS_TESTING`, para permitir testes que incluam o arquivo e usem `pdrv` diretamente.
+
+---
+
+## 5. Fluxo do `run()` passo a passo
+
+```
+1. Abre o arquivo (-i) ou usa stdin
+2. Repete até acabar o arquivo:
+   a. Lê uma linha (readline)
+   b. Linha vazia?                    → ignora, volta ao passo 2
+   c. counter++
+   d. counter <= skip?                → pula (cabeçalho)
+   e. counter > skip + keep?          → para o loop
+   f. Divide a linha em tokens
+   g. Primeira linha válida?          → define numDim, ajusta máscara,
+                                        calcula numDimMask, dimensiona vetores
+   h. Converte cada token em double   → active = true/false
+   i. Aplica o filtro de colunas      → DataVector::copy(data → dataMasked)
+   j. -fd ativo?                      → imprime dataMasked
+   k. tracker.update(dataMasked)      → atualiza estatísticas
+   l. data.deactivate()               → limpa para a próxima linha
+3. Dá nomes "1", "2", "3"... às colunas filtradas
+```
+
+Detalhes do passo g: se nenhum filtro foi dado, a máscara vira "todas as colunas verdadeiras". Se o filtro for mais curto que o número de colunas, as colunas restantes ficam `false`. Se for mais longo, é cortado.
+
+---
+
+## 6. Comportamentos que valem saber
+
+- **Sem arquivo, o programa espera o teclado.** Sem `-i` e sem redirecionamento, ele lê de `stdin` até EOF, o que parece travamento.
+- **Colunas sem nenhum valor válido** aparecem com contagem 0 e valores 0.000000 na tabela.
+- **Variância populacional**: o desvio padrão dividido por N, não N−1, então pode diferir de planilhas que usam desvio amostral.
+- **Só há flags para uma vírgula como delimitador**: arquivos com `;` ou tabulação não são suportados sem mudar o código (`options.delimiter`).
+- **Desempenho**: o maior custo é a conversão de texto em número, que cria um `istringstream` por célula. Para arquivos grandes, compile com `-O2`.

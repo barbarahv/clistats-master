@@ -1,0 +1,26 @@
+# clistats —PARA OQ SERVERIA ESSE PROGRAMA
+
+Ele serve para calcular estatísticas rápidas de dados numéricos direto no terminal, 
+sem abrir Excel, Python ou R. Você entrega um arquivo CSV (ou o texto de outro programa)
+ e ele devolve, para cada coluna, quantos valores válidos há, o mínimo, a média, o máximo e
+o desvio padrão.
+
+Exemplos de uso:
+
+Resumo rápido de um CSV. Você recebe um arquivo com milhares de linhas 
+(vendas, medições de sensores, notas de alunos) e quer saber a faixa e a média de cada 
+coluna antes de qualquer análise.
+Arquivos grandes. Como processa linha a linha sem carregar tudo na memória,
+ dá para usar em arquivos que travariam uma planilha.
+Dados sujos. Células com texto, vazias ou inválidas são ignoradas em vez de derrubar o cálculo. 
+Isso ajuda com dados reais, que quase sempre têm falhas.
+Pipelines em scripts. Você pode encadear com outros comandos do terminal, 
+por exemplo cat dados.csv | clistats -s 1, ou usar em scripts automáticos que geram relatórios.
+Gráficos com gnuplot. As linhas de cabeçalho começam com #, que é o comentário do gnuplot,
+ então a saída pode ir direto para ele.
+Escolher só algumas colunas. Com -fc 1:3,5 você calcula apenas as colunas que interessam.
+O menu interativo em português foi adicionado para quem não quer decorar as flags:
+ ele pergunta o arquivo, quantas linhas de cabeçalho pular e quais colunas usar.
+
+Ele não faz análises avançadas como mediana, percentis, correlação ou gráficos.
+ É uma ferramenta pequena para um resumo estatístico básico.

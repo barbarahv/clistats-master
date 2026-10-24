@@ -1,0 +1,82 @@
+# Versão sequencial — clistats
+
+Aplicação base: **clistats** (código aberto, autor dpmcmlxxvi), uma ferramenta de linha de comando que lê números delimitados (CSV) e calcula, por dimensão (coluna), contagem, mínimo, média, máximo e desvio padrão.
+
+Arquivo: `so_sequencial.cpp`
+
+## 1. Instalar dependências
+
+Somente um compilador C++ com suporte a C++17 (Ubuntu/Debian):
+
+```bash
+sudo apt update
+sudo apt install -y g++
+```
+
+## 2. Compilar
+
+```bash
+g++ -O2 -std=c++17 -pthread so_sequencial.cpp -o so_sequencial
+```
+
+## 3. Executar
+
+```bash
+./so_sequencial -i entrada.csv
+```
+
+Também lê da entrada padrão:
+
+```bash
+./so_sequencial < entrada.csv
+```
+
+Para medir o tempo:
+
+```bash
+time ./so_sequencial -i entrada.csv
+```
+
+Ajuda completa: `./so_sequencial --help`
+
+## Entrada e saída
+
+- **Entrada:** arquivo CSV com números separados por vírgula, uma linha por registro. Tokens que não são numéricos são ignorados.
+- **Saída:** tabela com uma linha por dimensão (coluna): Count, Minimum, Mean, Maximum e Stdev.
+
+### Gerar uma entrada de teste
+
+```bash
+python3 -c "
+import random
+random.seed(1)
+with open('entrada.csv','w') as f:
+    for i in range(300000):
+        f.write(','.join('%.4f'%random.uniform(-1000,1000) for _ in range(10))+'\n')
+"
+```
+
+Aumente o número de linhas (300000) até a execução sequencial levar **pelo menos 2 segundos** na sua máquina.
+
+## Execução em container
+
+Veja `container/Dockerfile` na raiz do projeto.
+
+
+## Resumo das 5 etapas (todas as versões)
+
+A partir da **raiz do projeto**:
+
+1. **Instalar dependências:** `sudo apt update && sudo apt install -y g++`
+2. **Compilar tudo:**
+   ```bash
+   mkdir -p bin
+   for f in sequencial/*.cpp processos/*.cpp threads/*.cpp; do
+     g++ -O2 -std=c++17 -pthread "$f" -o "bin/$(basename "$f" .cpp)"
+   done
+   ```
+3. **Sequencial:** `./bin/so_sequencial -i testes/entradas/entrada.csv`
+4. **Processos:** `./bin/so_processos_2 -i ...`, `./bin/so_processos_4 -i ...`, `./bin/so_processos_8 -i ...` (mesmo arquivo de entrada)
+5. **Threads:** `./bin/so_threads_2 -i ...`, `./bin/so_threads_4 -i ...`, `./bin/so_threads_8 -i ...` (mesmo arquivo de entrada)
+
+O README principal está na raiz do projeto (`README.md`).

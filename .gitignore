@@ -1,0 +1,23 @@
+/clistats
+/clistatstest
+/coverage_html
+*.gcda
+*.gcno
+*.gcov
+coverage.info
+
+# Arquivos de compilação locais
+*.o
+*.out
+prog_sequencial
+prog_processos
+prog_threads
+prog_processos_*
+prog_threads_*
+
+# Pastas ocultas de editores
+.vscode/
+.vs/
+bin/
+obj/
+out/
