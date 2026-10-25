@@ -1262,9 +1262,15 @@ private:
                         slots[i].stats[d].mean,
                         slots[i].stats[d].max,
                         slots[i].stats[d].variance));
+                        
                 }
+                
                 MultivariateTracker procStats(0, this->_options.statisticsOptions);
                 procStats.setStatistics(trackers);
+
+                std::cerr << "Fatia " << i
+                          << ": dimensoes = " << dims << std::endl;
+
                 if (!finalTracker.merge(procStats))
                 {
                     munmap(slots, shmSize);
@@ -1275,6 +1281,11 @@ private:
             }
             else
             {
+                std::cerr << "Fatia " << i
+                          << ": dimensoes = "
+                          << paiPorFatia.at(i).getDimension()
+                          << std::endl;
+
                 if (!finalTracker.merge(paiPorFatia.at(i)))
                 {
                     munmap(slots, shmSize);
@@ -1284,6 +1295,7 @@ private:
                 }
             }
         }
+
 
         _forkedOk  = true;
         _childPids = started;

@@ -1,14 +1,11 @@
-version: '3.4'
 
 services:
-  prog_processos:
+  teste-projeto:
     image: cpp-projeto-fechado
     build:
       context: .
       dockerfile: container/Dockerfile
-    cpus: "1"                  # Limita a CPU de acordo com o enunciado
-    stdin_open: true 
-    tty: true        
     volumes:
-      - ./testes:/app/testes   # Mapeia a pasta de testes para dentro do container
-    command: ["-i", "testes/entrada/entrada.csv", "-p", "2"]
+      - ./testes/entrada:/data
+    stdin_open: true
+    tty: true

@@ -1,26 +1,28 @@
-# 1. Etapa de Compilação (Ambiente com o compilador G++)
-FROM gcc:latest AS build
+
+FROM gcc:13 AS build
+
 WORKDIR /src
 
-# Copia todo o projeto para dentro do Docker
-COPY . .
+COPY sequencial/ ./sequencial/
+COPY processos/ ./processos/
+COPY threads/ ./threads/
 
-# Compila gerando apenas um único executável unificado para cada pasta
-RUN g++ -O3 -o prog_sequencial $(find ./sequencial -name "*.cpp")
-RUN g++ -O3 -o prog_processos $(find ./processos -name "*.cpp")
-RUN g++ -O3 -o prog_threads $(find ./threads -name "*.cpp") -pthread
+RUN g++ -O3 -std=c++17 sequencial/so_sequencial.cpp -o prog_sequencial
 
-# 2. Etapa Final (Gera o pacote fechado limpo e super leve)
-FROM ubuntu:latest AS final
+RUN g++ -O3 -std=c++17 processos/so_processos.cpp -o prog_processos
+
+RUN g++ -O3 -std=c++17 -pthread threads/so_threads.cpp -o prog_threads
+
+FROM ubuntu:24.04 AS final
+
 WORKDIR /app
 
-# Instala dependências básicas de runtime do C++
-RUN apt-get update && apt-get install -y libstdc++6 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copia os 3 executáveis oficiais e dinâmicos
 COPY --from=build /src/prog_sequencial .
 COPY --from=build /src/prog_processos .
 COPY --from=build /src/prog_threads .
 
-# Por padrão, inicia o sequencial se não especificar nada
 ENTRYPOINT ["./prog_sequencial"]

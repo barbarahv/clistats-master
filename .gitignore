@@ -5,19 +5,12 @@
 *.gcno
 *.gcov
 coverage.info
+# Executáveis compilados das versões
+/processos/so_processos
+/sequencial/so_sequencial
+/threads/so_threads
 
-# Arquivos de compilação locais
-*.o
-*.out
-prog_sequencial
-prog_processos
-prog_threads
-prog_processos_*
-prog_threads_*
+# Diretório de compilação
+/bin/
+/build/
 
-# Pastas ocultas de editores
-.vscode/
-.vs/
-bin/
-obj/
-out/
